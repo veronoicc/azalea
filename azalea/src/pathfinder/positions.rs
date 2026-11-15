@@ -1,7 +1,6 @@
 use std::{
-    cmp,
     hash::{Hash, Hasher},
-    mem::{self, transmute},
+    mem::transmute,
     ops::{Add, Mul},
 };
 
@@ -133,38 +132,25 @@ impl Hash for RelBlockPos {
     }
 }
 
-/// Similar to [`ChunkSectionPos`] but fits in 64 bits.
+/// Similar to [`ChunkSectionPos`], used as a cache key for chunk sections.
+///
+/// x and z are full `i32`s: section coordinates exceed `i16` past ±524,288
+/// blocks, which made the pathfinder look up the wrong (unloaded) chunk there.
 ///
 /// [`ChunkSectionPos`]: azalea_core::position::ChunkSectionPos
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct SmallChunkSectionPos {
     pub y: i32,
-    pub x: i16,
-    pub z: i16,
-}
-impl SmallChunkSectionPos {
-    pub fn as_u64(self) -> u64 {
-        unsafe { mem::transmute::<_, u64>(self) }
-    }
+    pub x: i32,
+    pub z: i32,
 }
 impl From<BlockPos> for SmallChunkSectionPos {
     #[inline]
     fn from(pos: BlockPos) -> Self {
         Self {
-            x: (pos.x >> 4) as i16,
+            x: pos.x >> 4,
             y: pos.y >> 4,
-            z: (pos.z >> 4) as i16,
+            z: pos.z >> 4,
         }
-    }
-}
-impl PartialOrd for SmallChunkSectionPos {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for SmallChunkSectionPos {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.as_u64().cmp(&other.as_u64())
     }
 }

@@ -168,7 +168,7 @@ impl CachedWorld {
             return None;
         }
 
-        let chunk_pos = ChunkPos::new(section_pos.x as i32, section_pos.z as i32);
+        let chunk_pos = ChunkPos::new(section_pos.x, section_pos.z);
         let section_index =
             azalea_world::chunk::section_index(section_pos.y * 16, self.min_y) as usize;
 
