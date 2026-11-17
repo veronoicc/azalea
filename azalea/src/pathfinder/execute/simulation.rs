@@ -25,8 +25,9 @@ use crate::{
         system::{Commands, Query},
     },
     pathfinder::{
-        ExecutingPath, PathfinderSystems,
+        ExecutingPath, Pathfinder, PathfinderSystems,
         debug::debug_render_path_with_particles,
+        doors::{DoorRules, DoorState, close_opened_doors},
         moves::{ExecuteCtx, IsReachedCtx},
         simulation::{SimulatedPlayerBundle, Simulation},
     },
@@ -61,6 +62,7 @@ impl Plugin for SimulationPathfinderExecutionPlugin {
                 super::patching::check_for_path_obstruction,
                 super::check_node_reached,
                 tick_execute_path,
+                close_opened_doors,
                 super::recalculate_near_end_of_path,
                 super::recalculate_if_has_goal_but_no_path,
             )
@@ -104,6 +106,7 @@ pub fn tick_execute_path(
     mut query: Query<(
         Entity,
         &mut ExecutingPath,
+        &mut Pathfinder,
         &mut LookDirection,
         &Position,
         &Physics,
@@ -123,6 +126,7 @@ pub fn tick_execute_path(
     for (
         entity,
         mut executing_path,
+        mut pathfinder,
         mut look_direction,
         position,
         physics,
@@ -179,6 +183,7 @@ pub fn tick_execute_path(
         match &*simulating_path_state {
             SimulatingPathState::Fail => {
                 if let Some(edge) = executing_path.path.front() {
+                    let (door_rules, doors) = pathfinder.door_parts();
                     let mut ctx = ExecuteCtx {
                         entity,
                         target: edge.movement.target,
@@ -189,6 +194,8 @@ pub fn tick_execute_path(
                         can_mine: true,
                         world: world_holder.shared.clone(),
                         menu: inventory.inventory_menu.clone(),
+                        door_rules,
+                        doors,
 
                         commands: &mut commands,
                         look_at_events: &mut look_at_events,
@@ -478,6 +485,10 @@ fn run_one_simulation(
                     can_mine: false,
                     world: sim.world.clone(),
                     menu: inventory.inventory_menu.clone(),
+                    // the simulation can't open doors, so it fails there and the real executor
+                    // takes over
+                    door_rules: &DoorRules::never(),
+                    doors: &mut DoorState::default(),
 
                     commands: &mut commands,
                     look_at_events: &mut look_at_events,

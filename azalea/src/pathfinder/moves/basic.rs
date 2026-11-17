@@ -9,18 +9,22 @@ use azalea_core::{
 
 use super::{Edge, ExecuteCtx, IsReachedCtx, MoveData, MovesCtx, default_is_reached};
 use crate::pathfinder::{
-    astar, costs::*, moves::BARITONE_COMPAT, player_pos_to_block_pos, positions::RelBlockPos,
+    astar, costs::*, doors, moves::BARITONE_COMPAT, player_pos_to_block_pos, positions::RelBlockPos,
 };
 
 pub fn basic_move(ctx: &mut MovesCtx, node: RelBlockPos) {
-    forward_move(ctx, node);
-    ascend_move(ctx, node);
-    descend_move(ctx, node);
-    diagonal_move(ctx, node);
-    downward_move(ctx, node);
+    let doorway = doors::in_doorway(ctx, node);
+    forward_move(ctx, node, doorway);
+    ascend_move(ctx, node, doorway);
+    descend_move(ctx, node, doorway);
+    // these aren't aware of doors, so they can't be made from inside one
+    if !doorway {
+        diagonal_move(ctx, node);
+        downward_move(ctx, node);
+    }
 }
 
-fn forward_move(ctx: &mut MovesCtx, pos: RelBlockPos) {
+fn forward_move(ctx: &mut MovesCtx, pos: RelBlockPos, doorway: bool) {
     let mut base_cost = SPRINT_ONE_BLOCK_COST;
     // it's for us cheaper to have the water cost be applied when leaving the water
     // rather than when entering
@@ -34,6 +38,9 @@ fn forward_move(ctx: &mut MovesCtx, pos: RelBlockPos) {
     }
 
     for dir in CardinalDirection::iter() {
+        if doorway && !doors::can_leave_doorway(ctx, pos, dir) {
+            continue;
+        }
         let offset = RelBlockPos::new(dir.x(), 0, dir.z());
 
         let new_pos = pos + offset;
@@ -47,7 +54,7 @@ fn forward_move(ctx: &mut MovesCtx, pos: RelBlockPos) {
             ctx.world
                 .cost_for_breaking_block(new_pos.up(1), ctx.mining_cache)
         } else {
-            ctx.world.cost_for_standing(new_pos, ctx.mining_cache)
+            doors::standing_cost(ctx, new_pos, dir)
         };
         if break_cost == f32::INFINITY {
             continue;
@@ -72,6 +79,9 @@ fn execute_forward_move(mut ctx: ExecuteCtx) {
     let center = ctx.target.center();
     ctx.jump_if_in_water();
 
+    if ctx.open_doors(&[ctx.target, ctx.target.up(1)]) {
+        return;
+    }
     if ctx.mine_while_at_start(ctx.target.up(1)) {
         return;
     }
@@ -83,7 +93,7 @@ fn execute_forward_move(mut ctx: ExecuteCtx) {
     ctx.sprint(SprintDirection::Forward);
 }
 
-fn ascend_move(ctx: &mut MovesCtx, pos: RelBlockPos) {
+fn ascend_move(ctx: &mut MovesCtx, pos: RelBlockPos, doorway: bool) {
     // the block we're standing on must be solid (so we don't try to ascend from a
     // bottom slab to a normal block in a way that's not possible)
 
@@ -104,17 +114,17 @@ fn ascend_move(ctx: &mut MovesCtx, pos: RelBlockPos) {
         stair_facing = Some(found_stair_facing);
     }
 
-    let break_cost_1 = ctx
-        .world
-        .cost_for_breaking_block(pos.up(2), ctx.mining_cache);
-    if break_cost_1 == f32::INFINITY {
-        return;
-    }
-
-    let base_cost =
-        f32::max(WALK_ONE_BLOCK_COST, *JUMP_ONE_BLOCK_COST) + JUMP_PENALTY + break_cost_1;
+    let base_cost = f32::max(WALK_ONE_BLOCK_COST, *JUMP_ONE_BLOCK_COST) + JUMP_PENALTY;
 
     for dir in CardinalDirection::iter() {
+        if doorway && !doors::can_leave_doorway(ctx, pos, dir) {
+            continue;
+        }
+        let break_cost_1 = doors::body_cost(ctx, pos.up(2), dir);
+        if break_cost_1 == f32::INFINITY {
+            continue;
+        }
+
         if let Some(stair_facing) = stair_facing {
             let expected_stair_facing = cardinal_direction_to_facing_property(dir);
             if stair_facing != expected_stair_facing {
@@ -124,12 +134,12 @@ fn ascend_move(ctx: &mut MovesCtx, pos: RelBlockPos) {
 
         let offset = RelBlockPos::new(dir.x(), 1, dir.z());
 
-        let break_cost_2 = ctx.world.cost_for_standing(pos + offset, ctx.mining_cache);
+        let break_cost_2 = doors::standing_cost(ctx, pos + offset, dir);
         if break_cost_2 == f32::INFINITY {
             continue;
         }
 
-        let cost = base_cost + break_cost_2;
+        let cost = base_cost + break_cost_1 + break_cost_2;
 
         ctx.edges.push(Edge {
             movement: astar::Movement {
@@ -154,6 +164,9 @@ fn execute_ascend_move(mut ctx: ExecuteCtx) {
 
     ctx.jump_if_in_water();
 
+    if ctx.open_doors(&[start.up(2), target, target.up(1)]) {
+        return;
+    }
     if ctx.mine_while_at_start(start.up(2)) {
         return;
     }
@@ -244,14 +257,15 @@ fn cardinal_direction_to_facing_property(dir: CardinalDirection) -> properties::
     }
 }
 
-fn descend_move(ctx: &mut MovesCtx, pos: RelBlockPos) {
+fn descend_move(ctx: &mut MovesCtx, pos: RelBlockPos, doorway: bool) {
     for dir in CardinalDirection::iter() {
+        if doorway && !doors::can_leave_doorway(ctx, pos, dir) {
+            continue;
+        }
         let dir_delta = RelBlockPos::new(dir.x(), 0, dir.z());
         let new_horizontal_position = pos + dir_delta;
 
-        let break_cost_1 = ctx
-            .world
-            .cost_for_passing(new_horizontal_position, ctx.mining_cache);
+        let break_cost_1 = doors::passing_cost(ctx, new_horizontal_position, dir);
         if break_cost_1 == f32::INFINITY {
             continue;
         }
@@ -284,7 +298,7 @@ fn descend_move(ctx: &mut MovesCtx, pos: RelBlockPos) {
             }
             break_cost_2 += ENTER_WATER_PENALTY;
         } else if fall_distance == 1 {
-            break_cost_2 = ctx.world.cost_for_standing(new_position, ctx.mining_cache);
+            break_cost_2 = doors::standing_cost(ctx, new_position, dir);
             if break_cost_2 == f32::INFINITY {
                 continue;
             }
@@ -330,6 +344,12 @@ pub fn execute_descend_move(mut ctx: ExecuteCtx) {
         ..
     } = ctx;
 
+    // the feet and head cells of the column that we walk into at the start's
+    // height
+    let drop = start.y - target.y;
+    if ctx.open_doors(&[target.up(drop), target.up(drop + 1)]) {
+        return;
+    }
     for i in (0..=(start.y - target.y + 1)).rev() {
         if ctx.mine_while_at_start(target.up(i)) {
             return;

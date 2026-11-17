@@ -63,6 +63,7 @@ pub fn check_for_path_obstruction(
             call_successors_fn(
                 &cached_world,
                 &mining_cache,
+                &opts.doors,
                 &custom_state_ref,
                 opts.successors_fn,
                 pos,

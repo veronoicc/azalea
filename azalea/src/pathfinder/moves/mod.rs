@@ -10,10 +10,12 @@ use std::{
 use azalea_block::BlockState;
 use azalea_client::{
     ClientMovementState, SprintDirection, StartSprintEvent, StartWalkEvent, WalkDirection,
-    inventory::SetSelectedHotbarSlotEvent, mining::StartMiningBlockEvent,
+    interact::StartUseItemQueued, inventory::SetSelectedHotbarSlotEvent,
+    mining::StartMiningBlockEvent,
 };
 use azalea_core::position::{BlockPos, Vec3};
 use azalea_inventory::Menu;
+use azalea_protocol::packets::game::s_interact::InteractionHand;
 use azalea_registry::builtin::BlockKind;
 use azalea_world::World;
 use bevy_ecs::{entity::Entity, message::MessageWriter, system::Commands, world::EntityWorldMut};
@@ -23,6 +25,7 @@ use tracing::trace;
 use super::{
     astar,
     custom_state::CustomPathfinderStateRef,
+    doors::{self, DoorRules, DoorState, Openable},
     mining::MiningCache,
     positions::RelBlockPos,
     world::{CachedWorld, is_block_state_passable},
@@ -45,6 +48,11 @@ pub const BARITONE_COMPAT: bool = false;
 
 pub fn default_move(ctx: &mut MovesCtx, node: RelBlockPos) {
     basic::basic_move(ctx, node);
+    // the other moves aren't aware of doors, so they can't be made from inside
+    // one
+    if doors::in_doorway(ctx, node) {
+        return;
+    }
     parkour::parkour_move(ctx, node);
     uncommon::uncommon_move(ctx, node);
 }
@@ -77,6 +85,10 @@ pub struct ExecuteCtx<'s, 'w1, 'w2, 'w3, 'w4, 'w5, 'w6, 'a> {
     pub can_mine: bool,
     pub world: Arc<RwLock<World>>,
     pub menu: Menu,
+    /// What the pathfinder may do with doors, fence gates and trapdoors.
+    pub door_rules: &'a DoorRules,
+    /// The doors that the pathfinder has opened, which get closed later.
+    pub doors: &'a mut DoorState,
 
     pub commands: &'a mut Commands<'w1, 's>,
     pub look_at_events: &'a mut MessageWriter<'w2, LookAtEvent>,
@@ -151,8 +163,54 @@ impl ExecuteCtx<'_, '_, '_, '_, '_, '_, '_, '_> {
 
     /// Returns whether this block could be mined.
     pub fn should_mine(&mut self, block: BlockPos) -> bool {
-        let block_state = self.world.read().get_block_state(block).unwrap_or_default();
+        let block_state = self.get_block_state(block);
+        if self.usable_door(block, block_state).is_some() {
+            // this is opened instead of mined, see `open_doors`
+            return false;
+        }
         should_mine_block_state(block_state)
+    }
+
+    /// Returns what kind of openable the block is if the pathfinder is allowed
+    /// to open it and it lets the current move through once it's open.
+    fn usable_door(&self, block: BlockPos, block_state: BlockState) -> Option<Openable> {
+        let along_x = self.target.x != self.start.x;
+        doors::usable(self.door_rules, block, block_state, along_x)
+    }
+
+    /// Open the closed doors, fence gates and trapdoors in `cells` by
+    /// right-clicking them, after stopping and looking at them.
+    ///
+    /// Returns whether we have to wait for a door to open. If so, the rest of
+    /// the move should be skipped for this tick.
+    ///
+    /// The click is only repeated after a few ticks without the door
+    /// changing, so this can be called every tick.
+    pub fn open_doors(&mut self, cells: &[BlockPos]) -> bool {
+        for &cell in cells {
+            let block_state = self.get_block_state(cell);
+            let Some(kind) = self.usable_door(cell, block_state) else {
+                continue;
+            };
+            if !doors::is_closed(block_state) {
+                continue;
+            }
+
+            self.walk(WalkDirection::None);
+            self.look_at_exact(cell.center());
+            if self.doors.can_click() {
+                self.doors
+                    .track_opened(cell, block_state, kind, &self.door_rules.avoid);
+                self.commands
+                    .entity(self.entity)
+                    .insert(StartUseItemQueued {
+                        hand: InteractionHand::MainHand,
+                        force_block: Some(cell),
+                    });
+            }
+            return true;
+        }
+        false
     }
 
     /// Mine the block at the given position.
@@ -263,5 +321,6 @@ pub struct MovesCtx<'a> {
     pub edges: &'a mut Vec<Edge>,
     pub world: &'a CachedWorld,
     pub mining_cache: &'a MiningCache,
+    pub doors: &'a DoorRules,
     pub custom_state: &'a CustomPathfinderStateRef,
 }

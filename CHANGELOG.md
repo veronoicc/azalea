@@ -14,6 +14,7 @@ is breaking anyways, semantic versioning is not followed.
 - `azalea-chat` is now re-exported in `azalea::chat`.
 - Shape offsets were implemented, so bots no longer get stuck on bamboo and dripstone.
 - Added the `TokioRuntimeHandle` resource to allow spawning Tokio tasks in the ECS again.
+- The pathfinder now opens wooden and copper doors and trapdoors and fence gates that are in its way, and closes them again behind itself. Iron doors and trapdoors are never opened. Use `PathfinderOpts::allow_opening` to turn this off and `PathfinderOpts::avoid_interacting` to exclude positions.
 
 ### Changed
 

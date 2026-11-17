@@ -30,6 +30,7 @@ use crate::{
         astar::PathfinderTimeout,
         custom_state::CustomPathfinderState,
         debug::debug_render_path_with_particles,
+        doors::close_opened_doors,
         execute::simulation::SimulatingPathState,
         moves::{ExecuteCtx, IsReachedCtx},
         player_pos_to_block_pos,
@@ -53,6 +54,9 @@ impl Plugin for DefaultPathfinderExecutionPlugin {
                 patching::check_for_path_obstruction,
                 check_node_reached,
                 tick_execute_path,
+                // after `tick_execute_path` so that closing a door overrides its walking and
+                // looking for the tick
+                close_opened_doors,
                 recalculate_near_end_of_path,
                 recalculate_if_has_goal_but_no_path,
             )
@@ -72,6 +76,7 @@ pub fn tick_execute_path(
     mut query: Query<(
         Entity,
         &mut ExecutingPath,
+        &mut Pathfinder,
         &Position,
         &Physics,
         Option<&Mining>,
@@ -84,12 +89,21 @@ pub fn tick_execute_path(
     mut jump_events: MessageWriter<JumpEvent>,
     mut start_mining_events: MessageWriter<StartMiningBlockEvent>,
 ) {
-    for (entity, mut executing_path, position, physics, mining, world_holder, inventory) in
-        &mut query
+    for (
+        entity,
+        mut executing_path,
+        mut pathfinder,
+        position,
+        physics,
+        mining,
+        world_holder,
+        inventory,
+    ) in &mut query
     {
         executing_path.ticks_since_last_node_reached += 1;
 
         if let Some(edge) = executing_path.path.front() {
+            let (door_rules, doors) = pathfinder.door_parts();
             let mut ctx = ExecuteCtx {
                 entity,
                 target: edge.movement.target,
@@ -100,6 +114,8 @@ pub fn tick_execute_path(
                 can_mine: true,
                 world: world_holder.shared.clone(),
                 menu: inventory.inventory_menu.clone(),
+                door_rules,
+                doors,
 
                 commands: &mut commands,
                 look_at_events: &mut look_at_events,

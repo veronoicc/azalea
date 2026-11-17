@@ -5,6 +5,7 @@ use azalea::{
     pathfinder::{
         astar::{self, PathfinderTimeout, a_star, heap::WeightedNode},
         custom_state::CustomPathfinderStateRef,
+        doors::DoorRules,
         goals::{BlockPosGoal, Goal},
         mining::MiningCache,
         positions::RelBlockPos,
@@ -139,6 +140,7 @@ fn run_pathfinder_benchmark(
             azalea::pathfinder::call_successors_fn(
                 &cached_world,
                 &mining_cache,
+                &DoorRules::default(),
                 &CustomPathfinderStateRef::default(),
                 successors_fn,
                 pos,

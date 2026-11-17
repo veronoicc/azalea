@@ -17,6 +17,7 @@ pub mod astar;
 pub mod costs;
 pub mod custom_state;
 pub mod debug;
+pub mod doors;
 pub mod execute;
 pub mod goals;
 mod goto_event;
@@ -117,6 +118,9 @@ pub struct Pathfinder {
     pub opts: Option<PathfinderOpts>,
     pub is_calculating: bool,
     pub goto_id: Arc<AtomicUsize>,
+    /// The doors, gates and trapdoors that this pathfinder has opened and
+    /// still has to close.
+    pub doors: doors::DoorState,
 }
 
 /// A component that's present on clients that are actively following a
@@ -146,6 +150,7 @@ pub struct PathFoundEvent {
     pub is_partial: bool,
     pub successors_fn: SuccessorsFn,
     pub allow_mining: bool,
+    pub doors: doors::DoorRules,
 }
 
 #[allow(clippy::type_complexity)]
@@ -404,7 +409,7 @@ pub fn goto_listener(
                 opts: PathfinderOpts {
                     min_timeout: PathfinderTimeout::Nodes(2_000),
                     max_timeout: PathfinderTimeout::Nodes(2_000),
-                    ..opts
+                    ..opts.clone()
                 },
             });
 
@@ -527,6 +532,7 @@ pub fn calculate_path(ctx: CalculatePathCtx) -> Option<PathFoundEvent> {
         call_successors_fn(
             &cached_world,
             &ctx.mining_cache,
+            &ctx.opts.doors,
             &ctx.custom_state.0.read(),
             ctx.opts.successors_fn,
             pos,
@@ -612,6 +618,7 @@ pub fn calculate_path(ctx: CalculatePathCtx) -> Option<PathFoundEvent> {
         is_partial,
         successors_fn: ctx.opts.successors_fn,
         allow_mining: ctx.opts.allow_mining,
+        doors: ctx.opts.doors.clone(),
     })
 }
 
@@ -678,6 +685,7 @@ pub fn path_found_listener(
                         call_successors_fn(
                             &cached_world,
                             &mining_cache,
+                            &event.doors,
                             &custom_state_ref,
                             successors_fn,
                             pos,
@@ -824,6 +832,7 @@ pub fn stop_pathfinding_on_world_change(
 pub fn call_successors_fn(
     cached_world: &CachedWorld,
     mining_cache: &MiningCache,
+    door_rules: &doors::DoorRules,
     custom_state: &CustomPathfinderStateRef,
     successors_fn: SuccessorsFn,
     pos: RelBlockPos,
@@ -833,6 +842,7 @@ pub fn call_successors_fn(
         edges: &mut edges,
         world: cached_world,
         mining_cache,
+        doors: door_rules,
         custom_state,
     };
     successors_fn(&mut ctx, pos);

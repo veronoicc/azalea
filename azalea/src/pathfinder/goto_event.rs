@@ -1,9 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
+use azalea_core::position::BlockPos;
 use bevy_ecs::prelude::*;
 
 use crate::pathfinder::{
     astar::PathfinderTimeout,
+    doors::DoorRules,
     goals::Goal,
     moves::{self, SuccessorsFn},
 };
@@ -56,6 +58,7 @@ impl GotoEvent {
 pub struct PathfinderOpts {
     pub(crate) successors_fn: SuccessorsFn,
     pub(crate) allow_mining: bool,
+    pub(crate) doors: DoorRules,
     pub(crate) retry_on_no_path: bool,
     pub(crate) min_timeout: PathfinderTimeout,
     pub(crate) max_timeout: PathfinderTimeout,
@@ -66,6 +69,7 @@ impl PathfinderOpts {
         Self {
             successors_fn: moves::default_move,
             allow_mining: true,
+            doors: DoorRules::new(),
             retry_on_no_path: true,
             min_timeout: PathfinderTimeout::Time(Duration::from_secs(1)),
             max_timeout: PathfinderTimeout::Time(Duration::from_secs(5)),
@@ -83,6 +87,28 @@ impl PathfinderOpts {
     /// Defaults to `true`.
     pub fn allow_mining(mut self, allow_mining: bool) -> Self {
         self.allow_mining = allow_mining;
+        self
+    }
+    /// Set whether the bot may open doors, fence gates and trapdoors that
+    /// block its way (and close them again behind itself).
+    ///
+    /// Only hand-openable blocks are ever used: wooden and copper doors and
+    /// trapdoors, and fence gates. Iron doors and iron trapdoors are never
+    /// opened.
+    ///
+    /// Defaults to `true`.
+    pub fn allow_opening(mut self, allow_opening: bool) -> Self {
+        self.doors.allow = allow_opening;
+        self
+    }
+    /// Set the positions that the pathfinder must never right-click, for
+    /// example because toggling them has side effects. A closed block at one
+    /// of these positions stays impassable, and it's never closed either.
+    ///
+    /// For doors, either half can be given. This replaces any positions that
+    /// were set earlier.
+    pub fn avoid_interacting(mut self, positions: impl IntoIterator<Item = BlockPos>) -> Self {
+        self.doors.avoid = Some(Arc::new(positions.into_iter().collect()));
         self
     }
     /// Whether we should recalculate the path when the pathfinder timed out and
